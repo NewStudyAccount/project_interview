@@ -46,7 +46,8 @@ interview-questions/
 ├── 01-java-core/                       # Java 核心
 │   ├── jvm-memory-model.md             # JVM & 内存模型
 │   ├── concurrency-programming.md      # 并发编程
-│   └── collections-framework.md        # 集合框架
+│   ├── collections-framework.md        # 集合框架
+│   └── binary-tree.md                  # 二叉树
 ├── 02-spring/                          # Spring 生态
 │   ├── spring-core.md                  # Spring Core (IoC/AOP/Bean)
 │   ├── spring-boot.md                  # Spring Boot
@@ -71,13 +72,13 @@ interview-questions/
 
 | 知识块 | 题数 | 核心考点 |
 |--------|------|----------|
-| Java 核心 | 11 | JVM/并发/集合 |
+| Java 核心 | 21 | JVM/并发/集合/二叉树 |
 | Spring 生态 | 8 | IoC/AOP/事务/自动装配 |
 | 数据库 | 6 | 索引/MVCC/锁/Redis |
 | 微服务架构 | 3 | 注册中心/限流/网关 |
 | 分布式/中间件 | 3 | 分布式事务/消息队列/分布式ID |
 | 场景设计 | 2 | 秒杀/订单超时 |
-| **合计** | **33** | - |
+| **合计** | **43** | - |
 
 ## 使用建议
 
