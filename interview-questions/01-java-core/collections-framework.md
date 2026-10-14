@@ -206,3 +206,217 @@ while (it.hasNext()) {
     }
 }
 ```
+
+---
+
+## Q6: TreeMap / TreeSet 底层？红黑树？
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              TreeMap / TreeSet 底层                       │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  TreeMap: 基于红黑树 (自平衡二叉搜索树)                  │
+│  TreeSet: 内部持有 TreeMap，value 是固定的 PRESENT       │
+│                                                          │
+│        ┌───┐                                             │
+│        │ 8 │  黑                                         │
+│        └─┬─┘                                             │
+│     ┌────┴────┐                                          │
+│   ┌─┴─┐     ┌─┴─┐                                       │
+│   │ 4 │红   │ 12│红                                      │
+│   └─┬─┘     └─┬─┘                                       │
+│   ┌─┴─┐     ┌─┴─┐                                       │
+│   │ 3 │黑   │ 9 │黑   ...                                │
+│   └───┘     └───┘                                        │
+│                                                          │
+│  红黑树规则:                                             │
+│  ├── 节点非红即黑                                       │
+│  ├── 根节点黑、叶子(NIL)黑                              │
+│  ├── 红节点的子节点必须黑                               │
+│  └── 任一节点到 NIL 路径黑节点数相同 → 平衡             │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### TreeMap 特性
+
+| 特性 | 说明 |
+|------|------|
+| 排序 | 按 key 自然序或 Comparator |
+| 复杂度 | get/put/remove 均为 O(logN) |
+| null key | 不允许（自然序），Comparator 可自定义 |
+| 线程安全 | 否，可用 `Collections.synchronizedSortedMap` |
+| 范围查询 | `subMap` / `headMap` / `tailMap` / `firstKey` / `lastKey` |
+
+### 面试答法
+
+> "TreeMap 底层是**红黑树**，保证有序且增删查都是 O(logN)。TreeSet 就是 value 占位的 TreeMap。需要排序或范围查询时用它；只要无序存储，HashMap/HashSet 性能更好。"
+
+---
+
+## Q7: ConcurrentHashMap JDK8 为什么放弃分段锁？size() 怎么算？（高频）
+
+### 为什么放弃分段锁
+
+| 原因 | 说明 |
+|------|------|
+| 锁粒度仍不够细 | 段内冲突仍会串行，默认 16 段并发度有限 |
+| 内存开销 | Segment 数组 + 链式 HashEntry，冗余结构多 |
+| 扩容低效 | JDK7 扩容锁整段，JDK8 可多线程协同迁移桶 |
+| CAS 成熟 | 桶头节点 CAS + 空桶 CAS + synchronized 低开销 |
+| 遍历两次定位 | JDK7 先定位 Segment 再定位桶，JDK8 一次 hash |
+
+### JDK8 锁策略
+
+```
+┌──────────────────────────────────────────────────────────┐
+│           ConcurrentHashMap JDK8 锁细节                  │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  put 流程:                                               │
+│  ├── 表空 → CAS 初始化 Node[]                            │
+│  ├── 桶空 → CAS 放首节点 (无锁)                         │
+│  ├── 桶头 hash == MOVED → 协助扩容                       │
+│  ├── 否则 synchronized(桶头节点) 链表/红黑树插入         │
+│  └── 扩容 → transfer，多线程按 transferIndex 认领区间   │
+│                                                          │
+│  size() 计算:                                            │
+│  ├── baseCount: 无竞争时 CAS 累加                       │
+│  ├── CounterCell[]: 竞争激烈时分散累加 (类 LongAdder)   │
+│  └── sum = baseCount + Σ CounterCell.value              │
+│                                                          │
+│  注意: size() 是弱一致性的，可能不是精确瞬时值          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 面试答法
+
+> "JDK8 放弃分段锁，是因为 Segment 并发度有限、内存开销大、扩容要锁整段。改成 **CAS + synchronized 锁桶头**，空桶直接 CAS，冲突时只锁一个 Node，扩容还能多线程协助。size() 用 baseCount + CounterCell[] 分散竞争（类似 LongAdder），最后求和，是弱一致快照，不保证绝对精确。"
+
+---
+
+## Q8: CopyOnWriteArrayList 原理与适用场景？
+
+### 写时复制原理
+
+```java
+// CopyOnWriteArrayList#add 核心逻辑
+public boolean add(E e) {
+    final ReentrantLock lock = this.lock;
+    lock.lock();                    // 写操作加锁
+    try {
+        Object[] elements = getArray();
+        int len = elements.length;
+        Object[] newElements = Arrays.copyOf(elements, len + 1);
+        newElements[len] = e;
+        setArray(newElements);      // 写入新数组，volatile 可见
+        return true;
+    } finally {
+        lock.unlock();
+    }
+}
+
+// 迭代器遍历的是旧数组快照，不会抛 CME
+public E get(int index) {
+    return getArray()[index];       // 读无锁
+}
+```
+
+| 维度 | 说明 |
+|------|------|
+| 读 | 无锁，O(1)，遍历的是快照 |
+| 写 | ReentrantLock + 复制整个数组，O(N) |
+| 内存 | 写放大，旧数组直到 GC 才回收 |
+| 一致性 | 最终一致，读可能读到旧数据 |
+
+### 适用场景
+
+- **读多写极少**：配置列表、白名单、监听器注册表
+- **不适合**：频繁写、实时一致性要求高、大数组场景
+
+### 面试答法
+
+> "CopyOnWriteArrayList 是**写时复制**：写加锁复制整个数组，读无锁走旧数组快照。适合读多写极少、能容忍读到旧数据的场景，比如路由规则、监听器列表。频繁写或数组很大时复制开销高，不要用。"
+
+---
+
+## Q9: PriorityQueue / Deque / ArrayDeque 底层？
+
+| 集合 | 底层 | 特点 | 典型用途 |
+|------|------|------|----------|
+| PriorityQueue | Object[] 堆（小顶堆） | 无界、非线程安全、无 null | 任务调度、TopK |
+| Deque | 接口 | 双端队列抽象 | 栈/队列统一 API |
+| ArrayDeque | 循环数组 | 双端 O(1) 坞摊，比 LinkedList 快 | 代替 Stack / LinkedList 作队列 |
+| LinkedList | 双向链表 | 也实现 Deque | 兼容旧代码 |
+
+### PriorityQueue 要点
+
+- 默认小顶堆：`siftUp` / `siftDown` 维护堆序
+- 不保证遍历有序，**只有 `poll()` 顺序出队才有序**
+- 构造时可传 Comparator 定制排序
+- 扩容：旧数组长度 < 64 时翻倍，否则 1.5 倍
+
+### ArrayDeque 要点
+
+- 循环数组，`head` / `tail` 指针，扩容 2 的幂
+- **不允许 null**（避免与「队列空」歧义）
+- 作栈用 `push/pop`，作队列用 `addLast/pollFirst`
+- JDK 官方推荐替代 `Stack`（Stack 继承 Vector，方法全加锁）
+
+### 面试答法
+
+> "PriorityQueue 是数组实现的**二叉堆**，出队有序、遍历无序，适合 TopK。ArrayDeque 是循环数组双端队列，性能优于 LinkedList，也是官方推荐的 Stack 替代品。队列/栈场景优先 ArrayDeque，需要出堆排序才用 PriorityQueue。"
+
+---
+
+## Q10: 集合遍历时删除元素的正确姿势？fail-fast 源码？
+
+### 三种正确姿势
+
+```java
+List<String> list = new ArrayList<>(List.of("a", "b", "c"));
+
+// 1. Iterator.remove（推荐）
+Iterator<String> it = list.iterator();
+while (it.hasNext()) {
+    if ("b".equals(it.next())) {
+        it.remove(); // 同步 modCount，不会 CME
+    }
+}
+
+// 2. JDK8+ removeIf
+list.removeIf("b"::equals);
+
+// 3. 先收集再删除
+list.removeAll(Collections.singleton("b"));
+```
+
+### fail-fast 源码机制
+
+```java
+// ArrayList.Itr#checkForComodification
+final void checkForComodification() {
+    if (modCount != expectedModCount)
+        throw new ConcurrentModificationException();
+}
+
+// iterator() 创建 Itr 时快照
+int expectedModCount = modCount;
+
+// 集合自身的 add/remove 会 ++modCount
+// 直接调 list.remove() 导致 modCount != expectedModCount
+// 下次 next() 时抛出 CME
+```
+
+| 方式 | 是否安全 | 原因 |
+|------|----------|------|
+| `list.remove()` | ❌ | 改的是集合 modCount，迭代器不知情 |
+| `it.remove()` | ✅ | 迭代器同步更新 expectedModCount |
+| `removeIf` | ✅ | 内部统一走迭代器删除 |
+| fori + remove(i) | ⚠️ | 不抛 CME，但索引偏移会漏元素 |
+
+### 面试答法
+
+> "遍历时删除要用 **Iterator.remove() 或 removeIf**，不能直接 list.remove()。fail-fast 依赖 modCount：创建迭代器时记录 expectedModCount，每次 next 检查是否被外部修改，不一致就抛 CME。fori 删除不抛异常但会漏元素，也不安全。"
